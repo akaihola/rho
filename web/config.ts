@@ -46,6 +46,21 @@ export function getProjectsDir(): string {
 	}
 }
 
+export function getRecursiveDiscovery(): boolean {
+	const initPath = path.join(getRhoHome(), "init.toml");
+	try {
+		const raw = parseToml(readFileSync(initPath, "utf-8")) as Record<
+			string,
+			unknown
+		>;
+		const settings = (raw?.settings as Record<string, unknown>) ?? {};
+		const web = (settings?.web as Record<string, unknown>) ?? {};
+		return web.recursive_discovery === true;
+	} catch {
+		return false;
+	}
+}
+
 export function getKnownFiles(): KnownFile[] {
 	const rhoHome = getRhoHome();
 	const brainDir = path.join(rhoHome, "brain");
