@@ -2,7 +2,7 @@ import { execFile as execFileCb } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { getProjectsDir, getRhoHome } from "./config.ts";
+import { getProjectsDirs, getRhoHome } from "./config.ts";
 
 const execFile = promisify(execFileCb);
 const SESSION_CONTEXT_FILE = path.join(
@@ -30,9 +30,14 @@ function normalizeSessionId(raw: string): string {
 
 function normalizeRepoId(raw: string): string {
 	const value = typeof raw === "string" ? raw.trim() : "";
-	if (!value || value.includes("\0") || path.isAbsolute(value)) {
+	if (!value || value.includes("\0")) {
 		return "";
 	}
+	// Absolute paths are accepted; security is enforced in resolveRepoFromId.
+	if (path.isAbsolute(value)) {
+		return path.normalize(value);
+	}
+	// Relative paths: normalise and reject traversal.
 	const normalized = path.posix.normalize(value.replace(/\\/g, "/"));
 	if (
 		normalized === "." ||
@@ -146,66 +151,82 @@ export async function setSessionGitContext(
 
 export function resolveRepoFromId(
 	repoId: string,
-	projectsDirRaw = getProjectsDir(),
+	projectsDirsRaw: string[] = getProjectsDirs(),
 ): { repoId: string; cwd: string } | null {
 	const normalizedRepoId = normalizeRepoId(repoId);
 	if (!normalizedRepoId) {
 		return null;
 	}
-	const projectsDir = path.resolve(projectsDirRaw);
-	const cwd = path.resolve(projectsDir, normalizedRepoId);
-	const rel = path.relative(projectsDir, cwd);
+
+	// New format: absolute path — validate it lives inside one of the allowed dirs.
+	if (path.isAbsolute(normalizedRepoId)) {
+		for (const baseDir of projectsDirsRaw) {
+			const rel = path.relative(path.resolve(baseDir), normalizedRepoId);
+			if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+				return { repoId: normalizedRepoId, cwd: normalizedRepoId };
+			}
+		}
+		return null;
+	}
+
+	// Legacy format: relative path — resolve against the first configured dir.
+	const primaryDir = path.resolve(projectsDirsRaw[0] ?? "");
+	if (!primaryDir) return null;
+	const cwd = path.resolve(primaryDir, normalizedRepoId);
+	const rel = path.relative(primaryDir, cwd);
 	if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) {
 		return null;
 	}
 	return { repoId: normalizedRepoId, cwd };
 }
 
-export async function listGitProjects(): Promise<
-	Array<{ id: string; name: string; cwd: string }>
-> {
-	const projectsDir = getProjectsDir();
-	let dirInfo: Awaited<ReturnType<typeof stat>>;
-	try {
-		dirInfo = await stat(projectsDir);
-	} catch {
-		return [];
-	}
-	if (!dirInfo.isDirectory()) {
-		return [];
-	}
+/**
+ * Scan `scanDir` for immediate-child git repos.
+ * Uses absolute paths as IDs to work correctly across multiple base directories.
+ */
+async function collectGitProjects(
+	scanDir: string,
+	results: Array<{ id: string; name: string; cwd: string }>,
+): Promise<void> {
+	if (results.length >= MAX_PROJECTS) return;
 
 	let entries: Awaited<ReturnType<typeof readdir>>;
 	try {
-		entries = await readdir(projectsDir, { withFileTypes: true });
+		entries = await readdir(scanDir, { withFileTypes: true });
 	} catch {
-		return [];
+		return;
 	}
 
-	const projects: Array<{ id: string; name: string; cwd: string }> = [];
 	for (const entry of entries) {
-		if (!entry.isDirectory()) {
+		if (results.length >= MAX_PROJECTS) break;
+		if (!entry.isDirectory()) continue;
+
+		const childPath = path.join(scanDir, entry.name);
+		if (await isGitRepo(childPath)) {
+			results.push({
+				id: childPath,
+				name: path.basename(childPath),
+				cwd: childPath,
+			});
+		}
+	}
+}
+
+export async function listGitProjects(): Promise<
+	Array<{ id: string; name: string; cwd: string }>
+> {
+	const projectsDirs = getProjectsDirs();
+	const projects: Array<{ id: string; name: string; cwd: string }> = [];
+
+	for (const baseDir of projectsDirs) {
+		try {
+			const info = await stat(baseDir);
+			if (!info.isDirectory()) continue;
+		} catch {
 			continue;
 		}
-		const repoId = normalizeRepoId(entry.name);
-		if (!repoId) {
-			continue;
-		}
-		const resolved = resolveRepoFromId(repoId, projectsDir);
-		if (!resolved) {
-			continue;
-		}
-		if (!(await isGitRepo(resolved.cwd))) {
-			continue;
-		}
-		projects.push({
-			id: resolved.repoId,
-			name: path.basename(resolved.cwd),
-			cwd: resolved.cwd,
-		});
-		if (projects.length >= MAX_PROJECTS) {
-			break;
-		}
+		await collectGitProjects(baseDir, projects);
+		if (projects.length >= MAX_PROJECTS) break;
 	}
 
 	projects.sort((a, b) => a.name.localeCompare(b.name));
