@@ -6,6 +6,7 @@
 
 projects_dir = "~/.rho/projects"      # Root directory used for local project/repo discovery
 # projects_dir = "~/projects"         # Example override (recommended if your repos live here)
+# projects_dirs = ["~/repos", "~/work/projects"]  # Multiple roots (array; overrides projects_dir)
 
 # ── Agent Identity ──────────────────────────────────────
 

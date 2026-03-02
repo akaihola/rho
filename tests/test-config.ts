@@ -159,6 +159,39 @@ memory = true
 		normalized.endsWith("/projects"),
 		"projects_dir top-level is resolved",
 	);
+	assert(
+		Array.isArray(cfg.projectsDirs) && cfg.projectsDirs.length === 1,
+		"projectsDirs has one entry for single projects_dir",
+	);
+}
+
+console.log("\n-- parseInitToml: projects_dirs (array) is resolved --");
+{
+	const toml = `
+projects_dirs = ["~/a", "~/b"]
+
+[agent]
+name = "rho"
+
+[modules.core]
+heartbeat = true
+memory = true
+`;
+	const cfg = parseInitToml(toml);
+	assert(Array.isArray(cfg.projectsDirs), "projectsDirs is array");
+	assert(cfg.projectsDirs.length === 2, "projectsDirs has 2 entries");
+	assert(
+		normalizePath(cfg.projectsDirs[0]).endsWith("/a"),
+		"first dir resolved",
+	);
+	assert(
+		normalizePath(cfg.projectsDirs[1]).endsWith("/b"),
+		"second dir resolved",
+	);
+	assert(
+		normalizePath(cfg.projectsDir ?? "").endsWith("/a"),
+		"projectsDir (compat) is first entry",
+	);
 }
 
 console.log("\n-- parseInitToml: agent.projects_dir is ignored --");
