@@ -1,4 +1,4 @@
-import { getProjectsDir } from "./config.ts";
+import { getProjectsDirs } from "./config.ts";
 import {
 	getSessionGitContext,
 	listGitProjects,
@@ -10,7 +10,7 @@ import { broadcastUiEvent } from "./server-ui-events.ts";
 app.get("/api/git/projects", async (c) => {
 	try {
 		const projects = await listGitProjects();
-		return c.json({ projectsDir: getProjectsDir(), projects });
+		return c.json({ projectsDirs: getProjectsDirs(), projects });
 	} catch (error) {
 		return c.json(
 			{ error: (error as Error).message ?? "Failed to list git projects" },

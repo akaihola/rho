@@ -11,6 +11,28 @@ Both are created by `rho init`. Edit either one, then run `rho sync`.
 
 ## init.toml
 
+### Project discovery
+
+Controls which directories the project switcher in the web UI scans for git repositories.
+
+```toml
+# Single directory (default):
+projects_dir = "~/.rho/projects"
+
+# Multiple directories (array; overrides projects_dir):
+projects_dirs = ["~/repos", "~/work/projects"]
+```
+
+By default only first-level children of each directory are checked. Enable recursive
+scanning to find repositories at any depth:
+
+```toml
+[settings.web]
+recursive_discovery = true   # walk the entire subtree; stops at git repo boundaries
+```
+
+Hidden directories (names starting with `.`) are skipped during recursive descent.
+
 ### Agent identity
 
 ```toml
@@ -60,6 +82,7 @@ Some modules are backed by external packages (`subagents`, `messenger`, `interac
 
 Attribution for those default third-party modules:
 Special thanks to **Nico Bailon (@nicobailon)** for building and maintaining these packages.
+
 - `subagents` → [`nicobailon/pi-subagents`](https://github.com/nicobailon/pi-subagents)
 - `messenger` → [`nicobailon/pi-messenger`](https://github.com/nicobailon/pi-messenger)
 - `interactive-shell` → [`nicobailon/pi-interactive-shell`](https://github.com/nicobailon/pi-interactive-shell)
@@ -106,12 +129,12 @@ interval = "30m"                    # "15m", "1h", "2h", etc.
 
 The `[settings.memory]` section controls brain.jsonl behavior:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `prompt_budget` | `2000` | Maximum tokens allocated for the brain prompt injected into the system prompt. Learnings are ranked and trimmed to fit. |
-| `decay_after_days` | `90` | Number of days a learning can go unreinforced before being automatically decayed (tombstoned). |
-| `decay_min_score` | `3` | Learnings with a reinforcement score at or above this threshold are exempt from decay regardless of age. |
-| `auto_memory` | `true` | Whether to automatically extract learnings and preferences from conversations. Can also be controlled via `RHO_AUTO_MEMORY` env var (env overrides config). |
+| Setting            | Default | Description                                                                                                                                                 |
+| ------------------ | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt_budget`    | `2000`  | Maximum tokens allocated for the brain prompt injected into the system prompt. Learnings are ranked and trimmed to fit.                                     |
+| `decay_after_days` | `90`    | Number of days a learning can go unreinforced before being automatically decayed (tombstoned).                                                              |
+| `decay_min_score`  | `3`     | Learnings with a reinforcement score at or above this threshold are exempt from decay regardless of age.                                                    |
+| `auto_memory`      | `true`  | Whether to automatically extract learnings and preferences from conversations. Can also be controlled via `RHO_AUTO_MEMORY` env var (env overrides config). |
 
 **Adding custom settings:** Add a `[settings.<name>]` section for any module in the registry. If `<name>` doesn't match a known module, `rho sync` warns you and ignores it. There's no freeform settings namespace — settings are always tied to a module.
 

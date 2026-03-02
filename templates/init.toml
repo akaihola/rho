@@ -6,6 +6,7 @@
 
 projects_dir = "~/.rho/projects"      # Root directory used for local project/repo discovery
 # projects_dir = "~/projects"         # Example override (recommended if your repos live here)
+# projects_dirs = ["~/repos", "~/work/projects"]  # Multiple roots (array; overrides projects_dir)
 
 # ── Agent Identity ──────────────────────────────────────
 
@@ -85,6 +86,7 @@ require_mention_in_groups = true      # Ignore group chatter unless activated
 [settings.web]
 enabled = false                       # Auto-start with `rho start`
 port = 3141                           # Server port (localhost only)
+# recursive_discovery = false         # Recursively find git repos under projects_dir(s) (default: first-level only)
 
 # ── RPC Orphan Policy ────────────────────────────────────
 # Controls how long rho-web keeps an active session alive after all
