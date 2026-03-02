@@ -2,7 +2,7 @@ import { execFile as execFileCb } from "node:child_process";
 import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { getProjectsDir, getRhoHome } from "./config.ts";
+import { getProjectsDir, getRecursiveDiscovery, getRhoHome } from "./config.ts";
 
 const execFile = promisify(execFileCb);
 const SESSION_CONTEXT_FILE = path.join(
@@ -161,10 +161,66 @@ export function resolveRepoFromId(
 	return { repoId: normalizedRepoId, cwd };
 }
 
+/**
+ * Scan `scanDir` for git repos relative to `baseDir`.
+ *
+ * Non-recursive (default): checks immediate children only.
+ * Recursive: walks the subtree, stops descending into a directory once a
+ * `.git` entry is found (avoids scanning submodules or nested repos), and
+ * skips hidden directories during descent (names starting with ".").
+ *
+ * IDs are relative paths from `baseDir`, matching the existing repoId format.
+ */
+async function collectGitProjects(
+	baseDir: string,
+	scanDir: string,
+	recursive: boolean,
+	results: Array<{ id: string; name: string; cwd: string }>,
+	depth = 0,
+): Promise<void> {
+	if (results.length >= MAX_PROJECTS) return;
+
+	let entries: Awaited<ReturnType<typeof readdir>>;
+	try {
+		entries = await readdir(scanDir, { withFileTypes: true });
+	} catch {
+		return;
+	}
+
+	for (const entry of entries) {
+		if (results.length >= MAX_PROJECTS) break;
+		if (!entry.isDirectory()) continue;
+		// During recursive descent skip hidden directories (depth > 0).
+		if (depth > 0 && entry.name.startsWith(".")) continue;
+
+		const childPath = path.join(scanDir, entry.name);
+
+		if (await isGitRepo(childPath)) {
+			const relId = path.relative(baseDir, childPath);
+			results.push({
+				id: relId,
+				name: entry.name,
+				cwd: childPath,
+			});
+			// Don't recurse into a git repo (avoids scanning submodules).
+		} else if (recursive) {
+			await collectGitProjects(
+				baseDir,
+				childPath,
+				recursive,
+				results,
+				depth + 1,
+			);
+		}
+	}
+}
+
 export async function listGitProjects(): Promise<
 	Array<{ id: string; name: string; cwd: string }>
 > {
 	const projectsDir = getProjectsDir();
+	const recursive = getRecursiveDiscovery();
+
 	let dirInfo: Awaited<ReturnType<typeof stat>>;
 	try {
 		dirInfo = await stat(projectsDir);
@@ -175,38 +231,8 @@ export async function listGitProjects(): Promise<
 		return [];
 	}
 
-	let entries: Awaited<ReturnType<typeof readdir>>;
-	try {
-		entries = await readdir(projectsDir, { withFileTypes: true });
-	} catch {
-		return [];
-	}
-
 	const projects: Array<{ id: string; name: string; cwd: string }> = [];
-	for (const entry of entries) {
-		if (!entry.isDirectory()) {
-			continue;
-		}
-		const repoId = normalizeRepoId(entry.name);
-		if (!repoId) {
-			continue;
-		}
-		const resolved = resolveRepoFromId(repoId, projectsDir);
-		if (!resolved) {
-			continue;
-		}
-		if (!(await isGitRepo(resolved.cwd))) {
-			continue;
-		}
-		projects.push({
-			id: resolved.repoId,
-			name: path.basename(resolved.cwd),
-			cwd: resolved.cwd,
-		});
-		if (projects.length >= MAX_PROJECTS) {
-			break;
-		}
-	}
+	await collectGitProjects(projectsDir, projectsDir, recursive, projects);
 
 	projects.sort((a, b) => a.name.localeCompare(b.name));
 	return projects;
