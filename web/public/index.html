@@ -702,7 +702,7 @@
                       <span>Loading repositories...</span>
                     </div>
                     <div class="chat-empty-state" x-show="!gitProjectsLoading && !gitProjectsError && gitProjects.length === 0">
-                      <span>No git repositories found under projects_dir.</span>
+                      <span>No git repositories found under configured project directories.</span>
                     </div>
                     <div class="ext-dialog-options" x-show="!gitProjectsLoading && gitProjects.length > 0">
                       <template x-for="repo in gitProjects" :key="repo.id">
