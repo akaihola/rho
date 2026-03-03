@@ -51,12 +51,12 @@ function normalizeRepoId(raw: string): string {
 
 async function isGitRepo(cwd: string): Promise<boolean> {
 	try {
-		await execFile("git", ["rev-parse", "--git-dir"], {
+		const result = await execFile("git", ["rev-parse", "--show-toplevel"], {
 			cwd,
 			timeout: 2000,
 			maxBuffer: 256 * 1024,
 		});
-		return true;
+		return path.resolve(result.stdout.trim()) === path.resolve(cwd);
 	} catch {
 		return false;
 	}
