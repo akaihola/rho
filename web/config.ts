@@ -17,32 +17,57 @@ export function getRhoHome(): string {
 	return process.env.RHO_HOME ?? path.join(os.homedir(), ".rho");
 }
 
-function resolveProjectsDir(raw: unknown): string {
-	const home = process.env.HOME ?? os.homedir();
-	const fallback = path.join(getRhoHome(), "projects");
-	if (typeof raw !== "string" || !raw.trim()) {
-		return fallback;
-	}
-	const value = raw.trim();
-	if (value === "~") {
-		return home;
-	}
-	if (value.startsWith("~/")) {
-		return path.resolve(home, value.slice(2));
-	}
-	return path.resolve(value);
+function resolveOneProjectDir(value: unknown, home: string): string {
+	if (typeof value !== "string" || !value.trim()) return "";
+	const v = value.trim();
+	if (v === "~") return home;
+	if (v.startsWith("~/")) return path.resolve(home, v.slice(2));
+	return path.resolve(v);
 }
 
-export function getProjectsDir(): string {
+function resolveProjectsDirs(raw: unknown): string[] {
+	const home = process.env.HOME ?? os.homedir();
+	const fallback = [path.join(getRhoHome(), "projects")];
+	if (Array.isArray(raw)) {
+		const dirs = raw.map((v) => resolveOneProjectDir(v, home)).filter(Boolean);
+		return dirs.length > 0 ? dirs : fallback;
+	}
+	const single = resolveOneProjectDir(raw, home);
+	return single ? [single] : fallback;
+}
+
+export function getProjectsDirs(): string[] {
 	const initPath = path.join(getRhoHome(), "init.toml");
 	try {
 		const raw = parseToml(readFileSync(initPath, "utf-8")) as Record<
 			string,
 			unknown
 		>;
-		return resolveProjectsDir(raw.projects_dir);
+		// projects_dirs (array) takes precedence; falls back to projects_dir (string)
+		const rawDirs = raw.projects_dirs ?? raw.projects_dir;
+		return resolveProjectsDirs(rawDirs);
 	} catch {
-		return resolveProjectsDir(undefined);
+		return resolveProjectsDirs(undefined);
+	}
+}
+
+/** Backward-compat: returns the first configured projects dir. */
+export function getProjectsDir(): string {
+	return getProjectsDirs()[0];
+}
+
+export function getRecursiveDiscovery(): boolean {
+	const initPath = path.join(getRhoHome(), "init.toml");
+	try {
+		const raw = parseToml(readFileSync(initPath, "utf-8")) as Record<
+			string,
+			unknown
+		>;
+		const settings = (raw?.settings as Record<string, unknown>) ?? {};
+		const web = (settings?.web as Record<string, unknown>) ?? {};
+		return web.recursive_discovery === true;
+	} catch {
+		return false;
 	}
 }
 

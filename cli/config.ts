@@ -29,6 +29,9 @@ export interface RhoConfig {
 		skills: Record<string, boolean>;
 	};
 	settings: Record<string, Record<string, unknown>>;
+	/** All resolved project directories (may have multiple entries). */
+	projectsDirs: string[];
+	/** First configured directory, kept for backward compatibility. */
 	projectsDir?: string;
 	web: WebConfig;
 }
@@ -60,20 +63,23 @@ const MODULE_CATEGORIES = [
 ] as const;
 type ModuleCategory = (typeof MODULE_CATEGORIES)[number];
 
-function resolveProjectsDir(raw: unknown): string {
+function resolveOneProjectDir(value: unknown, home: string): string {
+	if (typeof value !== "string" || !value.trim()) return "";
+	const v = value.trim();
+	if (v === "~") return home;
+	if (v.startsWith("~/")) return path.resolve(home, v.slice(2));
+	return path.resolve(v);
+}
+
+function resolveProjectsDirs(raw: unknown): string[] {
 	const home = process.env.HOME || os.homedir();
-	const fallback = path.join(home, ".rho", "projects");
-	if (typeof raw !== "string" || !raw.trim()) {
-		return fallback;
+	const fallback = [path.join(home, ".rho", "projects")];
+	if (Array.isArray(raw)) {
+		const dirs = raw.map((v) => resolveOneProjectDir(v, home)).filter(Boolean);
+		return dirs.length > 0 ? dirs : fallback;
 	}
-	const value = raw.trim();
-	if (value === "~") {
-		return home;
-	}
-	if (value.startsWith("~/")) {
-		return path.resolve(home, value.slice(2));
-	}
-	return path.resolve(value);
+	const single = resolveOneProjectDir(raw, home);
+	return single ? [single] : fallback;
 }
 
 // ---- Parsing ----
@@ -140,9 +146,19 @@ export function parseInitToml(content: string): RhoConfig {
 		port: typeof rawWebSettings?.port === "number" ? rawWebSettings.port : 3141,
 	};
 
-	const projectsDir = resolveProjectsDir(raw.projects_dir);
+	// projects_dirs (array) takes precedence; falls back to projects_dir (string).
+	const rawDirs = raw.projects_dirs ?? raw.projects_dir;
+	const projectsDirs = resolveProjectsDirs(rawDirs);
+	const projectsDir = projectsDirs[0];
 
-	return { agent: { name: agent.name }, modules, settings, projectsDir, web };
+	return {
+		agent: { name: agent.name },
+		modules,
+		settings,
+		projectsDirs,
+		projectsDir,
+		web,
+	};
 }
 
 /**
