@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, globSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -17,23 +17,36 @@ export function getRhoHome(): string {
 	return process.env.RHO_HOME ?? path.join(os.homedir(), ".rho");
 }
 
-function resolveOneProjectDir(value: unknown, home: string): string {
-	if (typeof value !== "string" || !value.trim()) return "";
+function resolveOneProjectDir(value: unknown, home: string): string[] {
+	if (typeof value !== "string" || !value.trim()) return [];
 	const v = value.trim();
-	if (v === "~") return home;
-	if (v.startsWith("~/")) return path.resolve(home, v.slice(2));
-	return path.resolve(v);
+	let expanded: string;
+	if (v === "~") expanded = home;
+	else if (v.startsWith("~/")) expanded = path.resolve(home, v.slice(2));
+	else expanded = path.resolve(v);
+	if (
+		expanded.includes("*") ||
+		expanded.includes("?") ||
+		expanded.includes("{")
+	) {
+		try {
+			return globSync(expanded);
+		} catch {
+			return [];
+		}
+	}
+	return [expanded];
 }
 
 function resolveProjectsDirs(raw: unknown): string[] {
 	const home = process.env.HOME ?? os.homedir();
 	const fallback = [path.join(getRhoHome(), "projects")];
 	if (Array.isArray(raw)) {
-		const dirs = raw.map((v) => resolveOneProjectDir(v, home)).filter(Boolean);
+		const dirs = raw.flatMap((v) => resolveOneProjectDir(v, home));
 		return dirs.length > 0 ? dirs : fallback;
 	}
-	const single = resolveOneProjectDir(raw, home);
-	return single ? [single] : fallback;
+	const dirs = resolveOneProjectDir(raw, home);
+	return dirs.length > 0 ? dirs : fallback;
 }
 
 export function getProjectsDirs(): string[] {
