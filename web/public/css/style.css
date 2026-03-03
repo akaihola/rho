@@ -13,7 +13,9 @@
 	--cyan: #5eead4;
 	--yellow: #fbbf24;
 	--red: #ef4444;
-	--mono: "Iosevka Web", "Iosevka", "JetBrains Mono", "Cascadia Code", "Fira Code", monospace;
+	--mono:
+		"Iosevka Web", "Iosevka", "JetBrains Mono", "Cascadia Code", "Fira Code",
+		monospace;
 	--nav-height: 2.6rem;
 	--footer-height: 2.2rem;
 	--page-pad: 1.25rem;
@@ -517,7 +519,7 @@ button {
 	-webkit-line-clamp: 2;
 	-webkit-box-orient: vertical;
 	line-height: 1.35;
-	max-height: 2.7em; /* 2 lines × 1.35 line-height */
+	max-height: 2.85em; /* 2 lines × 1.35 + room for descenders */
 }
 
 .chat-session-id {
@@ -2542,7 +2544,6 @@ body.theme-light .chat-block-body pre {
 		max-width: none;
 	}
 
-
 	/* Tighter message padding + smaller text */
 	.chat-message {
 		padding: 0.55rem 1.1rem;
@@ -2566,8 +2567,6 @@ body.theme-light .chat-block-body pre {
 	.chat-composer-hints {
 		display: none;
 	}
-
-
 
 	/* Safe area insets */
 	.nav {
@@ -2635,7 +2634,6 @@ body.theme-light .chat-block-body pre {
 		min-height: 36px;
 	}
 
-
 	/* Tighter thread body gap + slight horizontal inset for message cards */
 	.chat-thread-body {
 		gap: 0.55rem;
@@ -2647,7 +2645,6 @@ body.theme-light .chat-block-body pre {
 		padding: 0.25rem;
 		gap: 0.35rem;
 	}
-
 }
 
 @media (max-width: 480px) {
@@ -3051,7 +3048,7 @@ body.theme-light .chat-block-body pre {
 
 	.chat-session-title {
 		-webkit-line-clamp: 1;
-		max-height: 1.35em;
+		max-height: 1.5em; /* extra room for descenders (g, p, y, j) */
 	}
 }
 
@@ -3136,7 +3133,6 @@ body.theme-light .chat-block-body pre {
 		text-overflow: ellipsis;
 		white-space: nowrap;
 	}
-
 
 	.chat-thread-meta {
 		font-size: 0.58rem;
@@ -4003,7 +3999,9 @@ body.theme-light .chat-block-body pre {
 	overflow: hidden;
 	color: var(--text-muted);
 	font-size: 0.75rem;
-	transition: height 0.2s ease, opacity 0.15s ease;
+	transition:
+		height 0.2s ease,
+		opacity 0.15s ease;
 	z-index: 500;
 	background: var(--bg-alt);
 	pointer-events: none;
@@ -4019,6 +4017,10 @@ body.theme-light .chat-block-body pre {
 }
 
 @keyframes ptr-spin {
-	from { transform: rotate(0deg); }
-	to { transform: rotate(360deg); }
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
 }
