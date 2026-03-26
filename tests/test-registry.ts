@@ -96,23 +96,12 @@ console.log("\n-- no duplicate skill paths --");
 }
 
 // ================================================================
-// Core modules have alwaysOn
+// No module uses alwaysOn
 // ================================================================
-console.log("\n-- core modules are alwaysOn --");
+console.log("\n-- no module uses alwaysOn --");
 {
   for (const [name, entry] of Object.entries(REGISTRY)) {
-    if (entry.category === "core") {
-      assert(entry.alwaysOn === true, `${name}: core module has alwaysOn=true`);
-    }
-  }
-}
-
-console.log("\n-- non-core modules are not alwaysOn --");
-{
-  for (const [name, entry] of Object.entries(REGISTRY)) {
-    if (entry.category !== "core") {
-      assert(!entry.alwaysOn, `${name}: non-core module is not alwaysOn`);
-    }
+    assert(!entry.alwaysOn, `${name}: module should not have alwaysOn`);
   }
 }
 
