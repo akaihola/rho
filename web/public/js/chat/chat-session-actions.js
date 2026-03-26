@@ -475,6 +475,13 @@ export const rhoChatSessionActionMethods = {
 	},
 
 	sendSlashPrompt(message, classification) {
+		// Builtin commands are dispatched directly to their RPC equivalents
+		// instead of being forwarded to the agent via `prompt`.
+		if (classification.commandSource === "builtin") {
+			this.sendBuiltinSlashCommand(message, classification);
+			return;
+		}
+
 		const promptOptions = slashContract.resolvePromptOptions(
 			classification,
 			this.isStreaming,

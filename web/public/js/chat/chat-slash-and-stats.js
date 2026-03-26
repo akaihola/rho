@@ -437,4 +437,64 @@ export const rhoChatSlashAndStatsMethods = {
 			}
 		}
 	},
+
+	/**
+	 * Route a builtin slash command to its corresponding RPC command.
+	 *
+	 * The pi RPC backend advertises these commands via get_commands with
+	 * source: "builtin" and a rpcCommand hint field.  Instead of forwarding
+	 * the raw text through the prompt path (which ignores builtin slash
+	 * commands), we construct the correct RPC command object here and send
+	 * it directly.
+	 */
+	sendBuiltinSlashCommand(message, classification) {
+		if (!this.activeRpcSessionId) {
+			return;
+		}
+
+		const { commandName } = classification;
+		// Everything after "/<commandName>" (trimmed)
+		const arg = message.slice(`/${commandName}`.length).trim();
+
+		let command = null;
+
+		if (commandName === "name") {
+			if (!arg) {
+				this.error = "Usage: /name <session name>";
+				return;
+			}
+			command = { type: "set_session_name", name: arg };
+		} else if (commandName === "compact") {
+			command = {
+				type: "compact",
+				...(arg ? { customInstructions: arg } : {}),
+			};
+		} else if (commandName === "new") {
+			command = { type: "new_session" };
+		} else if (commandName === "export") {
+			command = { type: "export_html", ...(arg ? { outputPath: arg } : {}) };
+		}
+
+		if (!command) {
+			// Fallback: unknown builtin — send via prompt so the agent can explain
+			this.sendPromptMessage(message, {}, classification);
+			return;
+		}
+
+		this.error = "";
+		this.promptText = "";
+		this.closeSlashAutocomplete();
+
+		this.sendWs({
+			type: "rpc_command",
+			sessionId: this.activeRpcSessionId,
+			command,
+		});
+
+		if (this.shouldDismissKeyboardAfterSend()) {
+			this.blurComposer();
+		} else {
+			this.focusComposer();
+		}
+	},
 };

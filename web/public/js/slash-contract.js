@@ -152,6 +152,11 @@ function resolvePromptOptions(classification, isStreaming, defaultStreamingBehav
     return {};
   }
 
+	// Builtin commands are dispatched via a dedicated RPC command, not `prompt`.
+	if (classification.commandSource === "builtin") {
+		return {};
+	}
+
   return {
     streamingBehavior: defaultStreamingBehavior,
   };
