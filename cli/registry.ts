@@ -27,14 +27,12 @@ export const REGISTRY: Record<string, ModuleEntry> = {
 		extensions: ["extensions/rho"],
 		skills: ["skills/memory-consolidate", "skills/auto-memory"],
 		description: "Heartbeat daemon, check-ins, and memory consolidation",
-		alwaysOn: true,
 	},
 	memory: {
 		category: "core",
 		extensions: ["extensions/memory-viewer"],
 		skills: [],
 		description: "Memory browser and viewer",
-		alwaysOn: true,
 	},
 
 	// ── Knowledge ─────────────────────────────────────────
