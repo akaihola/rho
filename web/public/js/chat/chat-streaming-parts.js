@@ -34,17 +34,13 @@ export const rhoChatStreamingMethods = {
 			return;
 		}
 
-		// Merge toolResult into the last assistant message's tool_call parts
-		// instead of displaying as a standalone message
 		if (role === "toolResult" || role === "tool_result" || role === "tool") {
 			const resultOutput = extractToolOutput(rawMessage);
 			const toolCallId = rawMessage.toolCallId ?? rawMessage.tool_use_id ?? "";
 			if (resultOutput) {
-				// Find last assistant message and merge into matching tool_call
 				for (let j = this.renderedMessages.length - 1; j >= 0; j--) {
 					const msg = this.renderedMessages[j];
 					if (msg.role !== "assistant") continue;
-					// Match by toolCallId or first tool_call without output
 					const part =
 						msg.parts.find(
 							(p) =>
@@ -85,7 +81,6 @@ export const rhoChatStreamingMethods = {
 			timestamp: toIsoTimestamp(rawMessage.timestamp),
 		});
 
-		// Skip empty messages
 		if (!normalized.parts || normalized.parts.length === 0) {
 			return;
 		}
@@ -121,8 +116,10 @@ export const rhoChatStreamingMethods = {
 
 	ensureStreamingMessage(eventMessage) {
 		const eventId = String(eventMessage?.id ?? "");
-		const messageId = eventId || this.streamMessageId || `stream-${Date.now()}`;
-		this.streamMessageId = messageId;
+		const messageId = this.streamMessageId || eventId || `stream-${Date.now()}`;
+		if (!this.streamMessageId) {
+			this.streamMessageId = messageId;
+		}
 
 		let message = this.renderedMessages.find((item) => item.id === messageId);
 		if (!message) {
@@ -135,7 +132,15 @@ export const rhoChatStreamingMethods = {
 			});
 			message = {
 				...normalized,
+				rawAssistantMessage: {
+					id: messageId,
+					role: "assistant",
+					content: [],
+					timestamp: toIsoTimestamp(eventMessage?.timestamp),
+					model: eventMessage?.model,
+				},
 				stream: {
+					sourceMessageId: eventId,
 					textBuffers: {},
 					thinkingBuffers: {},
 					toolCallBuffers: {},
@@ -144,11 +149,26 @@ export const rhoChatStreamingMethods = {
 			this.renderedMessages.push(message);
 		}
 
-		if (!message.stream) {
+		const sourceMessageId =
+			eventId && eventId !== messageId
+				? eventId
+				: (message.stream?.sourceMessageId ?? eventId);
+		if (!message.stream || message.stream.sourceMessageId !== sourceMessageId) {
 			message.stream = {
+				sourceMessageId,
 				textBuffers: {},
 				thinkingBuffers: {},
 				toolCallBuffers: {},
+			};
+		}
+
+		if (!message.rawAssistantMessage) {
+			message.rawAssistantMessage = {
+				id: messageId,
+				role: "assistant",
+				content: [],
+				timestamp: toIsoTimestamp(eventMessage?.timestamp),
+				model: eventMessage?.model,
 			};
 		}
 
@@ -165,15 +185,37 @@ export const rhoChatStreamingMethods = {
 		return next;
 	},
 
-	scheduleMarkdownRender(messageId, contentIndex) {
-		const key = String(contentIndex);
+	streamPartKey(message, partType, contentIndex) {
+		const sourceId = message?.stream?.sourceMessageId || "active";
+		return `${message.id}-stream-${partType}-${sourceId}-${contentIndex}`;
+	},
+
+	indexToolCallParts(message) {
+		if (!message || !Array.isArray(message.parts)) {
+			return;
+		}
+		for (const part of message.parts) {
+			if (part.type === "tool_call" && part.toolCallId) {
+				this.toolCallPartById.set(part.toolCallId, {
+					messageId: message.id,
+					key: part.key,
+				});
+			}
+		}
+	},
+
+	scheduleMarkdownRender(message, contentIndex) {
+		const messageId = message?.id ?? "";
+		if (!messageId) {
+			return;
+		}
+		const sourceId = message?.stream?.sourceMessageId || "active";
+		const key = `${sourceId}:${contentIndex}`;
 		if (!this.markdownRenderQueue.has(messageId)) {
 			this.markdownRenderQueue.set(messageId, new Set());
 		}
 		this.markdownRenderQueue.get(messageId).add(key);
 
-		// Use 150ms debounced setTimeout instead of requestAnimationFrame
-		// to batch rapid streaming token deltas
 		if (this.markdownTimeout != null) {
 			return;
 		}
@@ -181,7 +223,7 @@ export const rhoChatStreamingMethods = {
 		this.markdownTimeout = setTimeout(() => {
 			this.markdownTimeout = null;
 			this.flushMarkdownRender();
-		}, 150);
+		}, 100);
 	},
 
 	flushMarkdownRender() {
@@ -195,26 +237,26 @@ export const rhoChatStreamingMethods = {
 				continue;
 			}
 
-			for (const index of indexes) {
+			for (const indexKey of indexes) {
+				const [sourceId, index] = String(indexKey).split(":");
+				if ((message.stream.sourceMessageId || "active") !== sourceId) {
+					continue;
+				}
 				const text = message.stream.textBuffers[index] ?? "";
-				const partKey = `${messageId}-stream-text-${index}`;
+				const partKey = this.streamPartKey(message, "text", index);
 				const part = this.ensurePart(message, partKey, () => ({
 					type: "text",
 					key: partKey,
-					render: "html",
+					render: "text",
 					content: "",
 				}));
-				part.render = "html";
-				part.content = renderMarkdown(text);
+				part.render = "text";
+				part.content = text;
 			}
 		}
 
 		this.markdownRenderQueue.clear();
-
-		this.$nextTick(() => {
-			highlightCodeBlocks(this.$refs.thread);
-			this.scrollThreadToBottom();
-		});
+		this.scrollThreadToBottom();
 	},
 
 	handleAssistantDelta(event) {
@@ -225,7 +267,7 @@ export const rhoChatStreamingMethods = {
 
 		if (deltaType === "text_start") {
 			message.stream.textBuffers[contentIndex] = "";
-			this.scheduleMarkdownRender(message.id, contentIndex);
+			this.scheduleMarkdownRender(message, contentIndex);
 			return;
 		}
 
@@ -233,7 +275,7 @@ export const rhoChatStreamingMethods = {
 			message.stream.textBuffers[contentIndex] =
 				(message.stream.textBuffers[contentIndex] ?? "") +
 				String(delta.delta ?? "");
-			this.scheduleMarkdownRender(message.id, contentIndex);
+			this.scheduleMarkdownRender(message, contentIndex);
 			return;
 		}
 
@@ -241,13 +283,13 @@ export const rhoChatStreamingMethods = {
 			if (typeof delta.content === "string") {
 				message.stream.textBuffers[contentIndex] = delta.content;
 			}
-			this.scheduleMarkdownRender(message.id, contentIndex);
+			this.scheduleMarkdownRender(message, contentIndex);
 			return;
 		}
 
 		if (deltaType === "thinking_start") {
 			message.stream.thinkingBuffers[contentIndex] = "";
-			const key = `${message.id}-stream-thinking-${contentIndex}`;
+			const key = this.streamPartKey(message, "thinking", contentIndex);
 			this.ensurePart(message, key, () => ({
 				type: "thinking",
 				key,
@@ -265,7 +307,7 @@ export const rhoChatStreamingMethods = {
 						String(delta.delta ?? "");
 			message.stream.thinkingBuffers[contentIndex] = nextText;
 
-			const key = `${message.id}-stream-thinking-${contentIndex}`;
+			const key = this.streamPartKey(message, "thinking", contentIndex);
 			const part = this.ensurePart(message, key, () => ({
 				type: "thinking",
 				key,
@@ -273,16 +315,13 @@ export const rhoChatStreamingMethods = {
 			}));
 			part.content = renderMarkdown(nextText);
 
-			this.$nextTick(() => {
-				highlightCodeBlocks(this.$refs.thread);
-				this.scrollThreadToBottom();
-			});
+			this.scrollThreadToBottom();
 			return;
 		}
 
 		if (deltaType === "toolcall_start") {
 			message.stream.toolCallBuffers[contentIndex] = "";
-			const key = `${message.id}-stream-tool-${contentIndex}`;
+			const key = this.streamPartKey(message, "tool", contentIndex);
 			this.ensurePart(message, key, () => ({
 				type: "tool_call",
 				key,
@@ -303,7 +342,7 @@ export const rhoChatStreamingMethods = {
 			message.stream.toolCallBuffers[contentIndex] =
 				(message.stream.toolCallBuffers[contentIndex] ?? "") + chunk;
 
-			const key = `${message.id}-stream-tool-${contentIndex}`;
+			const key = this.streamPartKey(message, "tool", contentIndex);
 			const part = this.ensurePart(message, key, () => ({
 				type: "tool_call",
 				key,
@@ -429,7 +468,6 @@ export const rhoChatStreamingMethods = {
 		part.output = output;
 		part.outputPreview = generateOutputPreview(output);
 
-		// Compute semantic view now that we have output
 		const argsText = part.args ?? "";
 		const toolName = part.name ?? "";
 		const semantic = parseToolSemantic(toolName, argsText, output);
@@ -445,7 +483,6 @@ export const rhoChatStreamingMethods = {
 			}
 		}
 
-		// Calculate duration
 		if (part.startTime) {
 			const elapsed = Date.now() - part.startTime;
 			if (elapsed >= 1000) {

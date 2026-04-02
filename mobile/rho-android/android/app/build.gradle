@@ -1,0 +1,102 @@
+import groovy.json.JsonSlurper
+
+apply plugin: 'com.android.application'
+
+def repoPackageJson = new JsonSlurper().parse(file('../../../../package.json'))
+def mobilePackageJson = new JsonSlurper().parse(file('../../package.json'))
+def appVersionName = (repoPackageJson.version ?: '0.0.0').toString()
+def appVersionCode = semverToVersionCode(appVersionName)
+def baseApplicationId = 'dev.rhobot.rhoandroid'
+def applicationIdSuffixValue = (project.findProperty('rhoApplicationIdSuffix') ?: '').toString()
+def appNameSuffixValue = (project.findProperty('rhoAppNameSuffix') ?: '').toString()
+def useDebugSigningForRelease = ((project.findProperty('rhoUseDebugSigningForRelease') ?: 'false').toString()).toBoolean()
+def resolvedApplicationId = "${baseApplicationId}${applicationIdSuffixValue}"
+def resolvedAppName = "rho${appNameSuffixValue}"
+
+def mobileVersion = (mobilePackageJson.version ?: '').toString()
+if (mobileVersion != appVersionName) {
+    throw new GradleException("mobile/rho-android/package.json version ${mobileVersion} must match root package.json version ${appVersionName}")
+}
+
+int semverToVersionCode(String versionName) {
+    def matcher = (versionName =~ /^(\d+)\.(\d+)\.(\d+)(?:-rc\.(\d+))?$/)
+    if (!matcher.matches()) {
+        throw new GradleException("Unsupported version format for Android release: ${versionName}. Expected x.y.z or x.y.z-rc.n")
+    }
+
+    int major = matcher[0][1].toInteger()
+    int minor = matcher[0][2].toInteger()
+    int patch = matcher[0][3].toInteger()
+    String rcRaw = matcher[0][4]
+    int stageCode = rcRaw != null ? rcRaw.toInteger() : 99
+
+    if (stageCode > 99) {
+        throw new GradleException("RC number must be <= 99 for Android versionCode derivation: ${versionName}")
+    }
+
+    return (major * 1_000_000) + (minor * 10_000) + (patch * 100) + stageCode
+}
+
+android {
+    namespace "dev.rhobot.rhoandroid"
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId resolvedApplicationId
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode appVersionCode
+        versionName appVersionName
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        resValue "string", "app_name", "\"${resolvedAppName}\""
+        resValue "string", "title_activity_main", "\"${resolvedAppName}\""
+        resValue "string", "package_name", "\"${resolvedApplicationId}\""
+        resValue "string", "custom_url_scheme", "\"${resolvedApplicationId}\""
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        release {
+            if (System.getenv("KEYSTORE_FILE")) {
+                storeFile file(System.getenv("KEYSTORE_FILE"))
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (System.getenv("KEYSTORE_FILE")) {
+                signingConfig signingConfigs.release
+            } else if (useDebugSigningForRelease) {
+                signingConfig signingConfigs.debug
+            }
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+
+}
+
+apply from: 'capacitor.build.gradle'

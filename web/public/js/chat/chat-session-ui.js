@@ -1,3 +1,7 @@
+import {
+	copyToolCallDisplayState,
+	mergeAssistantMessages,
+} from "./assistant-turns.js";
 import * as primitives from "./constants-and-primitives.js";
 import * as modelThinking from "./model-thinking-and-toast.js";
 import * as renderingUsage from "./rendering-and-usage.js";
@@ -7,12 +11,8 @@ import {
 	sortSessionsForSidebar,
 } from "./session-list-ordering.js";
 import * as toolSemantics from "./tool-semantics.js";
-
 const {
 	CHAT_REFRESH_INTERVAL,
-	parseToolSemantic,
-	semanticHeaderSummary,
-	semanticOutputSummary,
 	formatTimestamp,
 	highlightCodeBlocks,
 	normalizeMessage,
@@ -27,64 +27,36 @@ export const rhoChatSessionUiMethods = {
 		const messageId = String(message?.id ?? this.streamMessageId ?? "");
 
 		if (role === "assistant") {
-			const finalMessage = normalizeMessage({
-				...(message ?? {}),
-				id: messageId || `stream-${Date.now()}`,
-				timestamp: toIsoTimestamp(message?.timestamp),
-			});
-
-			// Carry over tool outputs, durations, and semantic data from
-			// streaming parts — the server's final message doesn't include
-			// tool results (those arrive as separate toolResult messages).
+			const turnId =
+				this.streamMessageId || messageId || `stream-${Date.now()}`;
 			const idx = this.renderedMessages.findIndex(
-				(item) =>
-					item.id === finalMessage.id || item.id === this.streamMessageId,
+				(item) => item.id === turnId || item.id === messageId,
 			);
-			if (idx >= 0) {
-				const streamMsg = this.renderedMessages[idx];
-				const streamToolParts = (streamMsg.parts ?? []).filter(
-					(p) => p.type === "tool_call" && p.output,
-				);
-				for (const streamPart of streamToolParts) {
-					// Match by toolCallId or by name+position
-					const finalPart = finalMessage.parts.find(
-						(p) =>
-							p.type === "tool_call" &&
-							!p.output &&
-							((p.toolCallId && p.toolCallId === streamPart.toolCallId) ||
-								p.name === streamPart.name),
-					);
-					if (finalPart) {
-						finalPart.output = streamPart.output;
-						finalPart.outputPreview = streamPart.outputPreview;
-						finalPart.duration = streamPart.duration || finalPart.duration;
-						finalPart.status = streamPart.status || finalPart.status;
-						// Recompute semantic with the actual output
-						const semantic = parseToolSemantic(
-							finalPart.name,
-							finalPart.args,
-							finalPart.output,
-						);
-						if (semantic) {
-							finalPart.semantic = semantic;
-							const hs = semanticHeaderSummary(finalPart.name, semantic);
-							if (hs) finalPart.argsSummary = hs;
-							const os = semanticOutputSummary(
-								finalPart.name,
-								semantic,
-								finalPart.output,
-							);
-							if (os) finalPart.outputPreview = os;
-						}
-					}
-				}
+			const previousTurn = idx >= 0 ? this.renderedMessages[idx] : null;
+			const rawTurnMessage = mergeAssistantMessages(
+				previousTurn?.rawAssistantMessage ?? {
+					id: turnId,
+					role: "assistant",
+					content: [],
+					timestamp: toIsoTimestamp(message?.timestamp),
+				},
+				{
+					...(message ?? {}),
+					id: messageId || turnId,
+					timestamp: toIsoTimestamp(message?.timestamp),
+				},
+				{ id: turnId },
+			);
+			const finalMessage = normalizeMessage(rawTurnMessage);
+			finalMessage.rawAssistantMessage = rawTurnMessage;
+			if (previousTurn) {
+				copyToolCallDisplayState(previousTurn, finalMessage);
 				this.renderedMessages[idx] = finalMessage;
 			} else {
 				this.renderedMessages.push(finalMessage);
 			}
-
+			this.indexToolCallParts?.(finalMessage);
 			this.accumulateUsageFromMessage(message);
-			this.streamMessageId = "";
 			this.isSendingPrompt = false;
 			this.$nextTick(() => {
 				highlightCodeBlocks(this.$refs.thread);
@@ -257,7 +229,15 @@ export const rhoChatSessionUiMethods = {
 				10,
 			);
 			const sessions = await resp.json();
-			this.sessions = sessions;
+			// Avoid DOM thrashing: only update if sessions actually changed
+			const newSessionIds = new Set(sessions.map((s) => s.id));
+			const currentSessionIds = new Set(this.sessions.map((s) => s.id));
+			const sessionsChanged =
+				sessions.length !== this.sessions.length ||
+				![...newSessionIds].every((id) => currentSessionIds.has(id));
+			if (sessionsChanged || total !== this.sessionsTotal) {
+				this.sessions = this.promoteActiveSessionIntoSidebar(sessions);
+			}
 			this.sessionsTotal = total;
 			this.sessionsLoaded = sessions.length;
 			this.allSessionsLoaded = sessions.length >= total;
@@ -310,6 +290,33 @@ export const rhoChatSessionUiMethods = {
 		if (el.scrollTop + el.clientHeight >= el.scrollHeight - 50) {
 			this.loadMoreSessions();
 		}
+	},
+
+	promoteActiveSessionIntoSidebar(sessions) {
+		if (
+			!this.activeSessionId ||
+			!this.activeSession ||
+			sessions.some((session) => session.id === this.activeSessionId)
+		) {
+			return sessions;
+		}
+		return [
+			{
+				id: this.activeSessionId,
+				file: this.activeSession.file || this.activeRpcSessionFile || "",
+				name: this.activeSession.name,
+				cwd: this.activeSession.header?.cwd || "",
+				timestamp: this.activeSession.header?.timestamp || "",
+				updatedAt: this.activeSession.updatedAt || "",
+				parentSession: this.activeSession.header?.parentSession,
+				messageCount:
+					this.activeSession.stats?.messageCount ||
+					this.activeSession.messages?.length ||
+					0,
+				isActive: false,
+			},
+			...sessions,
+		];
 	},
 
 	async reloadActiveSession() {
@@ -453,6 +460,7 @@ export const rhoChatSessionUiMethods = {
 			const session =
 				options.session ?? (await fetchJson(`/api/sessions/${sessionId}`));
 			this.applySession(session);
+			this.sessions = this.promoteActiveSessionIntoSidebar(this.sessions);
 
 			const sessionFile =
 				targetSessionFile ||

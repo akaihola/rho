@@ -142,6 +142,8 @@ Install [Termux](https://f-droid.org/packages/com.termux/) and [Termux:API](http
 curl -fsSL https://rhobot.dev/install | bash
 ```
 
+If Termux can't build the optional `node-pty` native module, rho still installs and runs. Only the embedded web terminal drawer is disabled until `node-pty` works on that device.
+
 </details>
 
 <details>
@@ -164,6 +166,24 @@ Guide: [docs/iphone-setup.md](docs/iphone-setup.md)
 | **Inbox agent** | Gets `name@rhobot.dev`, polls, reads, and replies to email |
 | **Telegram-controlled agent** | Receives prompts from Telegram and responds in-thread |
 | **Browser control panel** | Web UI for chat, memory, tasks, and config |
+
+---
+
+## Mobile Live Mode (native Android wrapper)
+
+If you use the native Android wrapper (`mobile/rho-android`) to run rho-web, background behavior has two explicit modes:
+
+- **Idle Mode (default):** best battery behavior. No always-on background socket while the app is backgrounded; reconnect + replay happens when the app becomes active again.
+- **Live Mode (GO LIVE):** starts an Android foreground service with a persistent notification and lease heartbeats to keep active streams alive while locked/backgrounded.
+
+Use **Live Mode** when stream continuity matters (for example, long active responses while the phone is locked). Without it, WebView background limits can cause disconnect/orphan behavior around the default orphan window.
+
+Tradeoffs:
+- higher battery/network usage while Live Mode is active,
+- persistent foreground notification,
+- explicit user-controlled lifecycle (`GO LIVE` / `STOP LIVE`).
+
+Baseline Live Mode reliability does **not** require Firebase credentials.
 
 ---
 
@@ -248,6 +268,7 @@ Inside a session:
 - [Demo walkthrough](docs/demo.md)
 - [Telegram setup + troubleshooting](docs/telegram.md)
 - [iPhone/iPad setup](docs/iphone-setup.md)
+- [Android mobile app over Tailscale](docs/mobile-tailscale.md)
 - [VPS setup guide](docs/vps-setup.md)
 - [Skills providers (vercel + clawhub)](docs/skills.md)
 - [Brain bootstrapping guide](docs/bootstrapping-brain.md)

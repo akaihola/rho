@@ -1,22 +1,20 @@
 import * as primitives from "./constants-and-primitives.js";
 import * as modelThinking from "./model-thinking-and-toast.js";
 import * as renderingUsage from "./rendering-and-usage.js";
-import { resumeReconnectSessions } from "./rpc-reconnect-runtime.js";
 import * as toolSemantics from "./tool-semantics.js";
 
-const { renderMarkdown, highlightCodeBlocks, buildWsUrl } = {
+const { renderMarkdown, highlightCodeBlocks } = {
 	...primitives,
 	...toolSemantics,
 	...renderingUsage,
 	...modelThinking,
 };
 
-export const rhoChatInputRpcMethods = {
+export const rhoChatInputMethods = {
 	setupPullToRefresh() {
 		this.$nextTick(() => {
 			const app = this.$root;
 			if (!app || typeof PullToRefresh === "undefined") return;
-			// Guard against double-init (Alpine re-init / HMR)
 			if (this._ptr) {
 				this._ptr.destroy();
 				this._ptr = null;
@@ -48,7 +46,6 @@ export const rhoChatInputRpcMethods = {
 
 						const wasNearBottom = this.isThreadNearBottom(120);
 
-						// Find and render the message
 						const msg = this.renderedMessages.find((m) => m.id === msgId);
 						if (!msg || !msg.parts) continue;
 
@@ -96,7 +93,6 @@ export const rhoChatInputRpcMethods = {
 	setupKeyboardShortcuts() {
 		document.addEventListener("keydown", (e) => {
 			if (e.key === "Escape") {
-				// Close dialogs first
 				if (this.extensionDialog) {
 					this.dismissDialog(null);
 					e.preventDefault();
@@ -107,11 +103,9 @@ export const rhoChatInputRpcMethods = {
 	},
 
 	handleComposerKeydown(e) {
-		// Slash autocomplete intercepts first
 		if (this.handleSlashAcKeydown(e)) {
 			return;
 		}
-		// Enter to send (without shift)
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			this.handlePromptSubmit();
@@ -138,7 +132,6 @@ export const rhoChatInputRpcMethods = {
 	},
 
 	handleDragOver(event) {
-		// Only show drop zone if dragging files that include images
 		if (!event.dataTransfer?.types?.includes("Files")) return;
 		event.preventDefault();
 		event.dataTransfer.dropEffect = "copy";
@@ -151,7 +144,6 @@ export const rhoChatInputRpcMethods = {
 
 	handleDragLeave(event) {
 		event.preventDefault();
-		// Debounce drag leave to avoid flicker when moving between child elements
 		if (this.dragLeaveTimeout) clearTimeout(this.dragLeaveTimeout);
 		this.dragLeaveTimeout = setTimeout(() => {
 			this.isDraggingOver = false;
@@ -175,7 +167,6 @@ export const rhoChatInputRpcMethods = {
 				addedAny = true;
 			}
 		}
-		// Focus the composer after dropping images
 		if (addedAny) {
 			this.$nextTick(() => {
 				this.$refs.composerInput?.focus();
@@ -191,7 +182,6 @@ export const rhoChatInputRpcMethods = {
 				this.addImageFile(file);
 			}
 		}
-		// Reset input so the same file can be re-selected
 		event.target.value = "";
 	},
 
@@ -199,7 +189,6 @@ export const rhoChatInputRpcMethods = {
 		const reader = new FileReader();
 		reader.onload = () => {
 			const dataUrl = reader.result;
-			// Extract base64 data (strip "data:image/png;base64," prefix)
 			const base64 = dataUrl.split(",")[1];
 			this.pendingImages.push({
 				dataUrl,
@@ -222,264 +211,90 @@ export const rhoChatInputRpcMethods = {
 		return distFromBottom <= threshold;
 	},
 
+	/**
+	 * Attach wheel/touch listeners that detect user-initiated scroll-up
+	 * immediately, bypassing the programmatic scroll guard. Called once
+	 * during component init.
+	 */
+	setupScrollIntentDetection() {
+		this.$nextTick(() => {
+			const thread = this.$refs.thread;
+			if (!thread) return;
+
+			// Wheel: deltaY < 0 means scrolling up
+			thread.addEventListener(
+				"wheel",
+				(e) => {
+					if (e.deltaY < 0 && !this.isThreadNearBottom(80)) {
+						this.userScrolledUp = true;
+					}
+				},
+				{ passive: true },
+			);
+
+			// Touch: track start Y, set flag on upward swipe
+			let touchStartY = null;
+			thread.addEventListener(
+				"touchstart",
+				(e) => {
+					touchStartY = e.touches[0]?.clientY ?? null;
+				},
+				{ passive: true },
+			);
+			thread.addEventListener(
+				"touchmove",
+				(e) => {
+					if (touchStartY === null) return;
+					const dy = (e.touches[0]?.clientY ?? 0) - touchStartY;
+					// dy > 0 means finger moved down → content scrolls up
+					if (dy > 10 && !this.isThreadNearBottom(80)) {
+						this.userScrolledUp = true;
+					}
+				},
+				{ passive: true },
+			);
+		});
+	},
+
 	handleThreadScroll() {
 		const el = this.$refs.thread;
 		if (!el) return;
 
-		// Always track position, even during programmatic scrolls
 		const prevTop = this._prevScrollTop;
 		this._prevScrollTop = el.scrollTop;
 
-		// Ignore events from our own programmatic scrolling
 		if (Date.now() < this._programmaticScrollUntil) return;
 
 		const distFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-
-		// Near the bottom → re-enable auto-scroll (also lets users
-		// scroll back down to resume without clicking "New messages")
 		if (distFromBottom <= 80) {
 			this.userScrolledUp = false;
 			return;
 		}
 
-		// Only mark scrolled-up when the user actively scrolled upward
-		// by a meaningful amount (ignores content growing below and
-		// tiny accidental trackpad impulses)
 		if (typeof prevTop === "number" && el.scrollTop < prevTop - 10) {
 			this.userScrolledUp = true;
 		}
 	},
 
-	connectWebSocket(force = false) {
-		if (force && this.ws) {
-			const staleWs = this.ws;
-			this.ws = null;
-			this.isWsConnected = false;
-			this.stopWsHeartbeat();
-			try {
-				staleWs.close();
-			} catch {
-				// Ignore close errors on stale sockets.
-			}
-		}
-		if (
-			this.ws &&
-			(this.ws.readyState === WebSocket.OPEN ||
-				this.ws.readyState === WebSocket.CONNECTING)
-		) {
-			return;
-		}
-
-		if (this.wsReconnectTimer) {
-			clearTimeout(this.wsReconnectTimer);
-			this.wsReconnectTimer = null;
-		}
-
-		const ws = new WebSocket(buildWsUrl());
-
-		ws.addEventListener("open", () => {
-			if (this.ws !== ws) {
-				return;
-			}
-			this.isWsConnected = true;
-			this.wsReconnectAttempts = 0;
-			this.error = "";
-			this.startWsHeartbeat();
-
-			if (this.awaitingStreamReconnectState) {
-				this.showReconnectBanner = true;
-				this.reconnectBannerMessage = "Reconnected. Checking stream status…";
-			} else {
-				this.showReconnectBanner = false;
-				this.reconnectBannerMessage = "";
-			}
-
-			if (resumeReconnectSessions(this)) {
-				return;
-			}
-			const sessionFile =
-				this.activeRpcSessionFile || this.getSessionFile(this.activeSessionId);
-			if (sessionFile) {
-				this.startRpcSession(sessionFile);
-			}
-		});
-
-		ws.addEventListener("message", (event) => {
-			if (this.ws !== ws) {
-				return;
-			}
-			this.handleWsMessage(event);
-		});
-
-		ws.addEventListener("close", () => {
-			if (this.ws === ws) {
-				this.stopWsHeartbeat();
-				const lostDuringResponse = this.isStreaming || this.isSendingPrompt;
-				if (lostDuringResponse) {
-					this.streamDisconnectedDuringResponse = true;
-					this.awaitingStreamReconnectState = true;
-					this.reconnectBannerMessage =
-						"Connection lost while agent was responding. Reconnecting…";
-				} else if (!this.awaitingStreamReconnectState) {
-					this.reconnectBannerMessage = "Connection lost. Reconnecting…";
-				}
-				this.ws = null;
-				this.isWsConnected = false;
-				this.showReconnectBanner = true;
-				this.scheduleReconnect();
-			}
-		});
-
-		ws.addEventListener("error", () => {
-			if (this.ws !== ws) {
-				return;
-			}
-			this.stopWsHeartbeat();
-			this.isWsConnected = false;
-		});
-
-		this.ws = ws;
-	},
-
-	scheduleReconnect() {
-		this.wsReconnectAttempts++;
-		this.showReconnectBanner = true;
-
-		// Exponential backoff: 1s, 2s, 4s, 8s, 16s, max 30s
-		const delay = Math.min(
-			this.wsBaseReconnectDelay * 2 ** (this.wsReconnectAttempts - 1),
-			this.wsMaxReconnectDelay,
-		);
-
-		this.wsReconnectTimer = setTimeout(() => {
-			this.connectWebSocket();
-		}, delay);
-	},
-
-	manualReconnect() {
-		this.wsReconnectAttempts = 0;
-		if (this.wsReconnectTimer) {
-			clearTimeout(this.wsReconnectTimer);
-			this.wsReconnectTimer = null;
-		}
-		this.showReconnectBanner = true;
-		this.reconnectBannerMessage = "Retrying connection…";
-		this.connectWebSocket(true);
-	},
-
-	startWsHeartbeat() {
-		this.stopWsHeartbeat();
-		this.wsPingTimer = setInterval(() => {
-			if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
-				return;
-			}
-			this.ws.send(
-				JSON.stringify({
-					type: "rpc_ping",
-					ts: Date.now(),
-				}),
-			);
-		}, 15000);
-	},
-
-	stopWsHeartbeat() {
-		if (this.wsPingTimer) {
-			clearInterval(this.wsPingTimer);
-			this.wsPingTimer = null;
-		}
-	},
-
-	nextRpcCommandId() {
-		this.rpcCommandCounter += 1;
-		return `rpc-${Date.now()}-${this.rpcCommandCounter}`;
-	},
-
-	isReplayableRpcCommand(commandType) {
-		return (
-			commandType === "prompt" ||
-			commandType === "steer" ||
-			commandType === "follow_up"
-		);
-	},
-
-	prepareRpcPayload(payload) {
-		if (
-			!payload ||
-			typeof payload !== "object" ||
-			payload.type !== "rpc_command" ||
-			!payload.command ||
-			typeof payload.command !== "object"
-		) {
-			return payload;
-		}
-
-		const nextPayload = {
-			...payload,
-			command: {
-				...payload.command,
-			},
+	sendModifierKey(key) {
+		const input = this.$refs.composerInput;
+		if (!input) return;
+		const opts = {
+			key,
+			code: key,
+			bubbles: true,
+			cancelable: true,
+			ctrlKey: this.ctrlSticky,
 		};
-
-		const commandId =
-			typeof nextPayload.command.id === "string"
-				? nextPayload.command.id.trim()
-				: "";
-		if (!commandId) {
-			nextPayload.command.id = this.nextRpcCommandId();
-		} else {
-			nextPayload.command.id = commandId;
+		input.dispatchEvent(new KeyboardEvent("keydown", opts));
+		input.dispatchEvent(new KeyboardEvent("keyup", opts));
+		if (this.ctrlSticky) {
+			this.ctrlSticky = false;
 		}
-
-		return nextPayload;
+		input.focus();
 	},
 
-	trackPendingRpcCommand(payload, options = {}) {
-		if (
-			!payload ||
-			typeof payload !== "object" ||
-			payload.type !== "rpc_command" ||
-			!payload.command ||
-			typeof payload.command !== "object" ||
-			options.trackPending === false
-		) {
-			return;
-		}
-
-		const commandId =
-			typeof payload.command.id === "string" ? payload.command.id : "";
-		if (!commandId) {
-			return;
-		}
-		const replayable =
-			typeof options.replayable === "boolean"
-				? options.replayable
-				: this.isReplayableRpcCommand(payload.command.type);
-		if (!replayable) {
-			return;
-		}
-
-		let pendingMap = this.pendingRpcCommands;
-		const rpcSessionId =
-			typeof payload.sessionId === "string" ? payload.sessionId.trim() : "";
-		const sessionFile =
-			typeof payload.sessionFile === "string" ? payload.sessionFile.trim() : "";
-		if ((rpcSessionId || sessionFile) && this.sessionStateById instanceof Map) {
-			for (const state of this.sessionStateById.values()) {
-				const matchesRpc = rpcSessionId && state?.rpcSessionId === rpcSessionId;
-				const matchesFile = !rpcSessionId && sessionFile === state?.sessionFile;
-				if (!matchesRpc && !matchesFile) {
-					continue;
-				}
-				if (state.pendingRpcCommands instanceof Map) {
-					pendingMap = state.pendingRpcCommands;
-				}
-				break;
-			}
-		}
-
-		pendingMap.set(commandId, {
-			payload: JSON.parse(JSON.stringify(payload)),
-			queuedAt: Date.now(),
-		});
+	toggleCtrlSticky() {
+		this.ctrlSticky = !this.ctrlSticky;
 	},
 };
